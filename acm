@@ -26,6 +26,96 @@ mkdir -p "$PROFILES_DIR"
 mkdir -p "$(dirname "$TOKEN_PATH")"
 mkdir -p "$CONFIG_DIR"
 
+if [[ "${1:-}" == "rotate" ]]; then
+    NEW_PROFILE=$(TOKEN_PATH="$TOKEN_PATH" PROFILES_DIR="$PROFILES_DIR" python3 - <<'EOF' 2>/dev/null
+import os, json, glob, shutil
+token_path = os.environ.get('TOKEN_PATH')
+profiles_dir = os.environ.get('PROFILES_DIR')
+try:
+    with open(token_path) as f:
+        active_data = json.load(f)
+    active_refresh = active_data.get('token', {}).get('refresh_token')
+except Exception:
+    active_refresh = None
+best_profile = None
+best_quota = -1
+active_profile_path = None
+for p in glob.glob(os.path.join(profiles_dir, '*.json')):
+    try:
+        with open(p) as f:
+            d = json.load(f)
+        if active_refresh and d.get('token', {}).get('refresh_token') == active_refresh:
+            active_profile_path = p
+        q = d.get('quota_percent', -1)
+        if q > best_quota:
+            best_quota = q
+            best_profile = p
+    except Exception:
+        pass
+active_quota = -1
+if active_profile_path:
+    try:
+        with open(active_profile_path) as f:
+            active_quota = json.load(f).get('quota_percent', -1)
+    except Exception:
+        pass
+if active_quota <= 0 or not active_profile_path:
+    if best_profile and best_profile != active_profile_path and best_quota > 0:
+        shutil.copy(best_profile, token_path)
+        print(os.path.basename(best_profile).replace('.json', ''))
+EOF
+)
+    if [[ -n "$NEW_PROFILE" ]]; then
+        echo "Auto-rotated to: $NEW_PROFILE"
+    fi
+    exit 0
+fi
+
+if [[ "${1:-}" == "run" ]]; then
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: acm run <command...>"
+        exit 1
+    fi
+    TOKEN_PATH="$TOKEN_PATH" PROFILES_DIR="$PROFILES_DIR" python3 - <<'EOF' >/dev/null 2>&1
+import os, json, glob, shutil
+token_path = os.environ.get('TOKEN_PATH')
+profiles_dir = os.environ.get('PROFILES_DIR')
+try:
+    with open(token_path) as f:
+        active_data = json.load(f)
+    active_refresh = active_data.get('token', {}).get('refresh_token')
+except Exception:
+    active_refresh = None
+best_profile = None
+best_quota = -1
+active_profile_path = None
+for p in glob.glob(os.path.join(profiles_dir, '*.json')):
+    try:
+        with open(p) as f:
+            d = json.load(f)
+        if active_refresh and d.get('token', {}).get('refresh_token') == active_refresh:
+            active_profile_path = p
+        q = d.get('quota_percent', -1)
+        if q > best_quota:
+            best_quota = q
+            best_profile = p
+    except Exception:
+        pass
+active_quota = -1
+if active_profile_path:
+    try:
+        with open(active_profile_path) as f:
+            active_quota = json.load(f).get('quota_percent', -1)
+    except Exception:
+        pass
+if active_quota <= 0 or not active_profile_path:
+    if best_profile and best_profile != active_profile_path and best_quota > 0:
+        shutil.copy(best_profile, token_path)
+EOF
+    shift
+    exec "$@"
+fi
+
 if [[ ! -f "$CONFIG_PATH" ]]; then
     cat <<JSON > "$CONFIG_PATH"
 {

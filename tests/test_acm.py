@@ -77,5 +77,45 @@ class TestAcmHelper(unittest.TestCase):
         val = acm_helper.get_config(config_path, "show_ascii_art", True)
         self.assertTrue(val)
 
+    def test_rotate_profile_swaps_on_zero_quota(self):
+        token_path = os.path.join(self.test_dir, "token.json")
+        token_data = {"token": {"refresh_token": "token_a"}, "quota_percent": 0}
+        with open(token_path, "w") as f:
+            json.dump(token_data, f)
+
+        profiles_dir = os.path.join(self.test_dir, "profiles")
+        os.makedirs(profiles_dir)
+        
+        with open(os.path.join(profiles_dir, "profile_a.json"), "w") as f:
+            json.dump({"token": {"refresh_token": "token_a"}, "quota_percent": 0}, f)
+        with open(os.path.join(profiles_dir, "profile_b.json"), "w") as f:
+            json.dump({"token": {"refresh_token": "token_b"}, "quota_percent": 80}, f)
+
+        rotated = acm_helper.rotate_profile(token_path, profiles_dir)
+        self.assertEqual(rotated, "profile_b")
+        with open(token_path) as f:
+            new_data = json.load(f)
+        self.assertEqual(new_data["token"]["refresh_token"], "token_b")
+
+    def test_rotate_profile_skips_when_quota_valid(self):
+        token_path = os.path.join(self.test_dir, "token.json")
+        token_data = {"token": {"refresh_token": "token_a"}, "quota_percent": 30}
+        with open(token_path, "w") as f:
+            json.dump(token_data, f)
+
+        profiles_dir = os.path.join(self.test_dir, "profiles")
+        os.makedirs(profiles_dir)
+
+        with open(os.path.join(profiles_dir, "profile_a.json"), "w") as f:
+            json.dump({"token": {"refresh_token": "token_a"}, "quota_percent": 30}, f)
+        with open(os.path.join(profiles_dir, "profile_b.json"), "w") as f:
+            json.dump({"token": {"refresh_token": "token_b"}, "quota_percent": 80}, f)
+
+        rotated = acm_helper.rotate_profile(token_path, profiles_dir)
+        self.assertEqual(rotated, "")
+        with open(token_path) as f:
+            new_data = json.load(f)
+        self.assertEqual(new_data["token"]["refresh_token"], "token_a")
+
 if __name__ == '__main__':
     unittest.main()

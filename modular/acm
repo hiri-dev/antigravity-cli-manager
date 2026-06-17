@@ -27,6 +27,24 @@ mkdir -p "$PROFILES_DIR"
 mkdir -p "$(dirname "$TOKEN_PATH")"
 mkdir -p "$CONFIG_DIR"
 
+if [[ "${1:-}" == "rotate" ]]; then
+    NEW_PROFILE=$("$HELPER_PATH" rotate "$TOKEN_PATH" "$PROFILES_DIR" 2>/dev/null)
+    if [[ -n "$NEW_PROFILE" ]]; then
+        echo "Auto-rotated to: $NEW_PROFILE"
+    fi
+    exit 0
+fi
+
+if [[ "${1:-}" == "run" ]]; then
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: acm run <command...>"
+        exit 1
+    fi
+    "$HELPER_PATH" rotate "$TOKEN_PATH" "$PROFILES_DIR" >/dev/null 2>&1
+    shift
+    exec "$@"
+fi
+
 if [[ ! -f "$CONFIG_PATH" ]]; then
     cat <<JSON > "$CONFIG_PATH"
 {

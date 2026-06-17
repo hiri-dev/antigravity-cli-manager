@@ -159,6 +159,47 @@ def get_all_quotas(profiles_dir):
                 pass
     return "\n".join(res)
 
+def rotate_profile(token_path, profiles_dir):
+    try:
+        with open(token_path) as f:
+            active_data = json.load(f)
+        active_refresh = active_data.get('token', {}).get('refresh_token')
+    except Exception:
+        active_refresh = None
+
+    import glob
+    import shutil
+    best_profile = None
+    best_quota = -1
+    active_profile_path = None
+    
+    for p in glob.glob(os.path.join(profiles_dir, '*.json')):
+        try:
+            with open(p) as f:
+                d = json.load(f)
+            if active_refresh and d.get('token', {}).get('refresh_token') == active_refresh:
+                active_profile_path = p
+            q = d.get('quota_percent', -1)
+            if q > best_quota:
+                best_quota = q
+                best_profile = p
+        except Exception:
+            pass
+
+    active_quota = -1
+    if active_profile_path:
+        try:
+            with open(active_profile_path) as f:
+                active_quota = json.load(f).get('quota_percent', -1)
+        except Exception:
+            pass
+
+    if active_quota <= 0 or not active_profile_path:
+        if best_profile and best_profile != active_profile_path and best_quota > 0:
+            shutil.copy(best_profile, token_path)
+            return os.path.basename(best_profile).replace('.json', '')
+    return ""
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(1)
@@ -175,6 +216,10 @@ def main():
         sys.exit(0 if success else 1)
     elif cmd == 'get_email':
         print(get_email(sys.argv[2]))
+    elif cmd == 'rotate':
+        new_prof = rotate_profile(sys.argv[2], sys.argv[3])
+        if new_prof:
+            print(new_prof)
 
 if __name__ == '__main__':
     main()

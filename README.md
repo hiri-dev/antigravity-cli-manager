@@ -29,14 +29,6 @@
 
 ### Installation
 
-**Arch Linux (AUR)**:
-```bash
-git clone https://aur.archlinux.org/antigravity-cli-manager-git.git
-cd antigravity-cli-manager-git
-makepkg -si
-```
-
-**Standard Bash (Manual)**:
 ```bash
 git clone https://github.com/hiri-dev/antigravity-cli-manager.git
 cd antigravity-cli-manager

@@ -1,0 +1,81 @@
+import os
+import sys
+import unittest
+import json
+import tempfile
+import shutil
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'modular'))
+import acm_helper
+
+class TestAcmHelper(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+
+    def test_sanitize_blocks_path_traversal(self):
+        token_data = {
+            "token": {
+                "access_token": "mock_token"
+            }
+        }
+        token_path = os.path.join(self.test_dir, "token.json")
+        with open(token_path, "w") as f:
+            json.dump(token_data, f)
+
+        original_urlopen = acm_helper.urllib.request.urlopen
+        class MockResponse:
+            def read(self):
+                return json.dumps({"email": "../../../etc/shadow"}).encode('utf-8')
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        def mock_urlopen(req, timeout=None):
+            return MockResponse()
+
+        acm_helper.urllib.request.urlopen = mock_urlopen
+        try:
+            email = acm_helper.get_email(token_path)
+            self.assertEqual(email, ".._.._.._etc_shadow")
+        finally:
+            acm_helper.urllib.request.urlopen = original_urlopen
+
+    def test_get_all_quotas_skips_invalid_json(self):
+        valid_profile = {
+            "g_pct": 50,
+            "c_pct": 40,
+            "quota_percent": 90
+        }
+        with open(os.path.join(self.test_dir, "valid.json"), "w") as f:
+            json.dump(valid_profile, f)
+
+        with open(os.path.join(self.test_dir, "invalid.json"), "w") as f:
+            f.write("{invalid_json")
+
+        result = acm_helper.get_all_quotas(self.test_dir)
+        lines = result.splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("valid.json", lines[0])
+        self.assertIn("50,40,90", lines[0])
+
+    def test_get_all_quotas_handles_missing_keys(self):
+        incomplete_profile = {
+            "g_pct": 20
+        }
+        with open(os.path.join(self.test_dir, "incomplete.json"), "w") as f:
+            json.dump(incomplete_profile, f)
+
+        result = acm_helper.get_all_quotas(self.test_dir)
+        self.assertIn("incomplete.json,20,,", result)
+
+    def test_get_config_returns_default_on_missing_file(self):
+        config_path = os.path.join(self.test_dir, "nonexistent.json")
+        val = acm_helper.get_config(config_path, "show_ascii_art", True)
+        self.assertTrue(val)
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,0 +1,374 @@
+#!/usr/bin/env bash
+
+RED='\033[0;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+BOLD='\033[1m'
+NC='\033[0m'
+INV='\033[7m'
+
+TOKEN_PATH="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+CONFIG_DIR="$HOME/.config/acm"
+CONFIG_PATH="$CONFIG_DIR/config.json"
+PROFILES_DIR="$CONFIG_DIR/profiles"
+AGY_PID_FILE="$CONFIG_DIR/agy.pid"
+HELPER_PATH="$(dirname "$0")/acm_helper.py"
+
+LEGACY_PROFILES_DIR="$HOME/antigravity-cli-manager/profiles"
+if [[ -d "$LEGACY_PROFILES_DIR" ]]; then
+    mkdir -p "$PROFILES_DIR"
+    cp -rn "$LEGACY_PROFILES_DIR"/*.json "$PROFILES_DIR"/ 2>/dev/null
+fi
+
+mkdir -p "$PROFILES_DIR"
+mkdir -p "$(dirname "$TOKEN_PATH")"
+mkdir -p "$CONFIG_DIR"
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+    cat <<JSON > "$CONFIG_PATH"
+{
+    "show_ascii_art": true,
+    "timeout_seconds": 3
+}
+JSON
+fi
+
+SHOW_ART=$("$HELPER_PATH" get_config "$CONFIG_PATH" show_ascii_art True)
+TIMEOUT=$("$HELPER_PATH" get_config "$CONFIG_PATH" timeout_seconds 3)
+
+trap "tput cnorm; exit" INT TERM EXIT
+
+tput civis
+
+selected=0
+
+colorize_google() {
+    local str="$1"
+    local colors=('\033[1;33m' '\033[1;31m' '\033[1;34m' '\033[1;34m' '\033[1;32m')
+    local c_idx=0
+    local out=""
+    for (( j=0; j<${#str}; j++ )); do
+        out+="${colors[$c_idx]}${str:$j:1}"
+        c_idx=$(( (c_idx + 1) % 5 ))
+    done
+    out+="\033[0m"
+    echo -e "$out"
+}
+
+colorize_anthropic() {
+    local str="$1"
+    local colors=('\033[38;5;208m' '\033[1;37m')
+    local c_idx=0
+    local out=""
+    for (( j=0; j<${#str}; j++ )); do
+        out+="${colors[$c_idx]}${str:$j:1}"
+        c_idx=$(( (c_idx + 1) % 2 ))
+    done
+    out+="\033[0m"
+    echo -e "$out"
+}
+
+refresh_account_quota() {
+    "$HELPER_PATH" refresh "$1" "$TIMEOUT"
+}
+
+run_refresh_quotas_startup() {
+    for profile in "$PROFILES_DIR"/*.json; do
+        [[ -f "$profile" ]] && refresh_account_quota "$profile" >/dev/null 2>&1 &
+    done
+}
+
+run_refresh_quotas_startup
+
+FIRST_RENDER=1
+FORCE_REDRAW=1
+LAST_STATE=""
+
+while true; do
+    profiles_data=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && profiles_data+=("$line")
+    done < <("$HELPER_PATH" get_all_quotas "$PROFILES_DIR" 2>/dev/null)
+
+    profiles=()
+    g_pcts=()
+    c_pcts=()
+    quota_pcts=()
+    max_pct=-1
+    CURRENT_STATE=""
+
+    for item in "${profiles_data[@]}"; do
+        IFS=',' read -r p g c q <<< "$item"
+        profiles+=("$p")
+        g_pcts+=("$g")
+        c_pcts+=("$c")
+        
+        if [[ ! "$q" =~ ^-?[0-9]+$ ]]; then
+            q=-1
+        fi
+        quota_pcts+=("$q")
+        CURRENT_STATE+="${q},"
+        if [[ "$q" -gt "$max_pct" ]]; then
+            max_pct=$q
+        fi
+    done
+    
+    num_opts=$((${#profiles[@]} + 2))
+    
+    [[ $selected -ge $num_opts ]] && selected=$((num_opts - 1))
+    
+    if [[ "$CURRENT_STATE" != "$LAST_STATE" || $FORCE_REDRAW -eq 1 ]]; then
+        LAST_STATE="$CURRENT_STATE"
+        FORCE_REDRAW=0
+        
+        if [[ $FIRST_RENDER -eq 1 ]]; then
+            clear
+            FIRST_RENDER=0
+        else
+            tput cup 0 0
+        fi
+        
+        pad="                                                                                                    "
+        echo -e "${WHITE}╭────────────────────────────────────────────────────────────────╮${NC}"
+        if [[ "$SHOW_ART" == "True" ]]; then
+            echo -e "${WHITE}│${NC}            \033[38;2;138;202;91m█\033[38;2;144;203;80m█\033[38;2;152;199;75m█\033[38;2;159;195;70m█\033[38;2;166;190;65m█\033[38;2;173;186;59m█\033[38;2;180;182;54m█\033[38;2;187;178;49m█\033[38;2;195;174;44m█     \033[38;2;238;149;12m█\033[38;2;245;145;7m█\033[38;2;252;141;1m█\033[38;2;254;134;4m█\033[38;2;252;126;10m█\033[38;2;251;117;16m█\033[38;2;249;109;23m█\033[38;2;248;100;29m█\033[38;2;246;92;35m█  \033[38;2;242;66;54m█\033[38;2;239;60;61m█\033[38;2;233;62;70m█\033[38;2;227;64;79m█\033[38;2;221;66;88m█\033[38;2;215;68;97m█   \033[38;2;191;76;132m█\033[38;2;185;78;141m█\033[38;2;179;80;150m█\033[38;2;173;82;159m█\033[38;2;167;84;168m█\033[38;2;159;87;175m█            \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}│${NC}           \033[38;2;132;198;104m█\033[38;2;138;202;91m█\033[38;2;144;203;80m█\033[38;2;152;199;75m░\033[38;2;159;195;70m░\033[38;2;166;190;65m░\033[38;2;173;186;59m░\033[38;2;180;182;54m░\033[38;2;187;178;49m█\033[38;2;195;174;44m█\033[38;2;202;170;38m█   \033[38;2;230;153;17m█\033[38;2;238;149;12m█\033[38;2;245;145;7m█\033[38;2;252;141;1m░\033[38;2;254;134;4m░\033[38;2;252;126;10m░\033[38;2;251;117;16m░\033[38;2;249;109;23m░\033[38;2;248;100;29m█\033[38;2;246;92;35m█\033[38;2;245;83;42m█\033[38;2;243;75;48m░\033[38;2;242;66;54m░\033[38;2;239;60;61m█\033[38;2;233;62;70m█\033[38;2;227;64;79m█\033[38;2;221;66;88m█\033[38;2;215;68;97m█\033[38;2;209;70;106m█ \033[38;2;197;74;124m█\033[38;2;191;76;132m█\033[38;2;185;78;141m█\033[38;2;179;80;150m█\033[38;2;173;82;159m█\033[38;2;167;84;168m█             \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}│${NC}          \033[38;2;125;194;118m░\033[38;2;132;198;104m█\033[38;2;138;202;91m█\033[38;2;144;203;80m█    \033[38;2;180;182;54m░\033[38;2;187;178;49m█\033[38;2;195;174;44m█\033[38;2;202;170;38m█  \033[38;2;223;157;22m█\033[38;2;230;153;17m█\033[38;2;238;149;12m█     \033[38;2;249;109;23m░\033[38;2;248;100;29m░\033[38;2;246;92;35m░  \033[38;2;242;66;54m░\033[38;2;239;60;61m█\033[38;2;233;62;70m█\033[38;2;227;64;79m█\033[38;2;221;66;88m░\033[38;2;215;68;97m█\033[38;2;209;70;106m█\033[38;2;203;72;115m█\033[38;2;197;74;124m█\033[38;2;191;76;132m█\033[38;2;185;78;141m░\033[38;2;179;80;150m█\033[38;2;173;82;159m█\033[38;2;167;84;168m█             \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}│${NC}          \033[38;2;125;194;118m░\033[38;2;132;198;104m█\033[38;2;138;202;91m█\033[38;2;144;203;80m█\033[38;2;152;199;75m█\033[38;2;159;195;70m█\033[38;2;166;190;65m█\033[38;2;173;186;59m█\033[38;2;180;182;54m█\033[38;2;187;178;49m█\033[38;2;195;174;44m█\033[38;2;202;170;38m█ \033[38;2;216;162;28m░\033[38;2;223;157;22m█\033[38;2;230;153;17m█\033[38;2;238;149;12m█          \033[38;2;242;66;54m░\033[38;2;239;60;61m█\033[38;2;233;62;70m█\033[38;2;227;64;79m█\033[38;2;221;66;88m░\033[38;2;215;68;97m░\033[38;2;209;70;106m█\033[38;2;203;72;115m█\033[38;2;197;74;124m█ \033[38;2;185;78;141m░\033[38;2;179;80;150m█\033[38;2;173;82;159m█\033[38;2;167;84;168m█             \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}│${NC}          \033[38;2;125;194;118m░\033[38;2;132;198;104m█\033[38;2;138;202;91m█\033[38;2;144;203;80m█\033[38;2;152;199;75m░\033[38;2;159;195;70m░\033[38;2;166;190;65m░\033[38;2;173;186;59m░\033[38;2;180;182;54m░\033[38;2;187;178;49m█\033[38;2;195;174;44m█\033[38;2;202;170;38m█ \033[38;2;216;162;28m░\033[38;2;223;157;22m█\033[38;2;230;153;17m█\033[38;2;238;149;12m█          \033[38;2;242;66;54m░\033[38;2;239;60;61m█\033[38;2;233;62;70m█\033[38;2;227;64;79m█ \033[38;2;215;68;97m░\033[38;2;209;70;106m░\033[38;2;203;72;115m░  \033[38;2;185;78;141m░\033[38;2;179;80;150m█\033[38;2;173;82;159m█\033[38;2;167;84;168m█             \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}│${NC}          \033[38;2;125;194;118m░\033[38;2;132;198;104m█\033[38;2;138;202;91m█\033[38;2;144;203;80m█    \033[38;2;180;182;54m░\033[38;2;187;178;49m█\033[38;2;195;174;44m█\033[38;2;202;170;38m█ \033[38;2;216;162;28m░\033[38;2;223;157;22m░\033[38;2;230;153;17m█\033[38;2;238;149;12m█\033[38;2;245;145;7m█     \033[38;2;248;100;29m█\033[38;2;246;92;35m█\033[38;2;245;83;42m█ \033[38;2;242;66;54m░\033[38;2;239;60;61m█\033[38;2;233;62;70m█\033[38;2;227;64;79m█      \033[38;2;185;78;141m░\033[38;2;179;80;150m█\033[38;2;173;82;159m█\033[38;2;167;84;168m█             \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}│${NC}          \033[38;2;125;194;118m█\033[38;2;132;198;104m█\033[38;2;138;202;91m█\033[38;2;144;203;80m█\033[38;2;152;199;75m█   \033[38;2;180;182;54m█\033[38;2;187;178;49m█\033[38;2;195;174;44m█\033[38;2;202;170;38m█\033[38;2;209;166;33m█ \033[38;2;223;157;22m░\033[38;2;230;153;17m░\033[38;2;238;149;12m█\033[38;2;245;145;7m█\033[38;2;252;141;1m█\033[38;2;254;134;4m█\033[38;2;252;126;10m█\033[38;2;251;117;16m█\033[38;2;249;109;23m█\033[38;2;248;100;29m█\033[38;2;246;92;35m█  \033[38;2;242;66;54m█\033[38;2;239;60;61m█\033[38;2;233;62;70m█\033[38;2;227;64;79m█\033[38;2;221;66;88m█     \033[38;2;185;78;141m█\033[38;2;179;80;150m█\033[38;2;173;82;159m█\033[38;2;167;84;168m█\033[38;2;159;87;175m█            \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}│${NC}          \033[38;2;125;194;118m░\033[38;2;132;198;104m░\033[38;2;138;202;91m░\033[38;2;144;203;80m░\033[38;2;152;199;75m░   \033[38;2;180;182;54m░\033[38;2;187;178;49m░\033[38;2;195;174;44m░\033[38;2;202;170;38m░\033[38;2;209;166;33m░   \033[38;2;238;149;12m░\033[38;2;245;145;7m░\033[38;2;252;141;1m░\033[38;2;254;134;4m░\033[38;2;252;126;10m░\033[38;2;251;117;16m░\033[38;2;249;109;23m░\033[38;2;248;100;29m░\033[38;2;246;92;35m░  \033[38;2;242;66;54m░\033[38;2;239;60;61m░\033[38;2;233;62;70m░\033[38;2;227;64;79m░\033[38;2;221;66;88m░     \033[38;2;185;78;141m░\033[38;2;179;80;150m░\033[38;2;173;82;159m░\033[38;2;167;84;168m░\033[38;2;159;87;175m░            \033[0m${WHITE}│${NC}"
+            echo -e "${WHITE}├────────────────────────────────────────────────────────────────┤${NC}"
+        else
+            echo -e "${WHITE}│${NC}${BOLD}                    ANTIGRAVITY CLI MANAGER                     ${NC}${WHITE}│${NC}"
+            echo -e "${WHITE}├────────────────────────────────────────────────────────────────┤${NC}"
+        fi
+        echo -e "${WHITE}│${NC}${pad:0:64}${WHITE}│${NC}"
+        
+        if [[ ${#profiles[@]} -eq 0 ]]; then
+            msg="                     No accounts saved yet.     "
+            cmsg="                ${YELLOW}No accounts saved yet.${NC}"
+            len=${#msg}
+            echo -e "${WHITE}│${NC}${cmsg}${pad:0:$((64 - len))}${WHITE}│${NC}"
+        else
+            count=1
+            for i in "${!profiles[@]}"; do
+                filename=$(basename "${profiles[$i]}" .json)
+                
+                g_pct="${g_pcts[$i]}"
+                c_pct="${c_pcts[$i]}"
+                quota_pct="${quota_pcts[$i]}"
+                
+                display_name="${filename}"
+                r_extras=""
+                c_extras=""
+                
+                if [[ -n "$g_pct" && -n "$c_pct" ]]; then
+                    g_str="G: ${g_pct}%"
+                    c_str="C: ${c_pct}%"
+                    r_extras="${g_str} ${c_str}"
+                    
+                    cg_str=$(colorize_google "$g_str")
+                    cc_str=$(colorize_anthropic "$c_str")
+                    c_extras="${cg_str} ${cc_str}"
+                fi
+                
+                if [[ -n "$quota_pct" && "$quota_pct" -eq "$max_pct" && "$max_pct" -ge 0 ]]; then
+                    r_extras="${r_extras} ★"
+                    c_extras="${c_extras} ${YELLOW}★${NC}"
+                fi
+                
+                if [[ $i -eq $selected ]]; then
+                    rtext="  ❯  [${count}] ${display_name} ${r_extras} "
+                    ctext="  ${CYAN}❯${NC} ${INV} [${count}] ${display_name}${NC} ${c_extras} "
+                    hint=" [d] delete "
+                    chint=" ${RED}[d]${NC} delete "
+                    hint_len=${#hint}
+                    
+                    len=${#rtext}
+                    spaces=$((64 - len - hint_len))
+                    if (( spaces >= 0 )); then
+                        rtext="${rtext}${pad:0:$spaces}${hint}"
+                        ctext="${ctext}${pad:0:$spaces}${chint}"
+                    fi
+                else
+                    rtext="     [${count}] ${display_name} ${r_extras} "
+                    ctext="     ${YELLOW}[${count}]${NC} ${display_name} ${c_extras} "
+                fi
+                len=${#rtext}
+                echo -e "${WHITE}│${NC}${ctext}${pad:0:$((64 - len))}${WHITE}│${NC}"
+                ((count++))
+            done
+        fi
+        
+        echo -e "${WHITE}│${NC}${pad:0:64}${WHITE}│${NC}"
+        echo -e "${WHITE}├────────────────────────────────────────────────────────────────┤${NC}"
+        echo -e "${WHITE}│${NC}${pad:0:64}${WHITE}│${NC}"
+        
+        idx=${#profiles[@]}
+        if [[ $idx -eq $selected ]]; then
+            rtext="  ❯  [+] Add new account "
+            ctext="  ${CYAN}❯${NC} ${INV} [+] Add new account ${NC}"
+        else
+            rtext="     [+] Add new account "
+            ctext="     ${GREEN}[+]${NC} Add new account "
+        fi
+        len=${#rtext}
+        echo -e "${WHITE}│${NC}${ctext}${pad:0:$((64 - len))}${WHITE}│${NC}"
+        
+        idx=$((idx + 1))
+        if [[ $idx -eq $selected ]]; then
+            rtext="  ❯  [x] Exit "
+            ctext="  ${CYAN}❯${NC} ${INV} [x] Exit ${NC}"
+        else
+            rtext="     [x] Exit "
+            ctext="     ${RED}[x]${NC} Exit "
+        fi
+        len=${#rtext}
+        echo -e "${WHITE}│${NC}${ctext}${pad:0:$((64 - len))}${WHITE}│${NC}"
+        
+        echo -e "${WHITE}│${NC}${pad:0:64}${WHITE}│${NC}"
+        echo -e "${WHITE}╰────────────────────────────────────────────────────────────────╯${NC}\033[J"
+    fi
+    
+    read -rsn1 -t 1 key
+    read_status=$?
+    
+    if [[ $read_status -gt 128 ]]; then
+        continue
+    fi
+    
+    FORCE_REDRAW=0
+    
+    if [[ "$key" == $'\x1b' ]]; then
+        read -rsn2 -t 0.1 seq
+        if [[ "$seq" == "[A" ]]; then key="w"; fi
+        if [[ "$seq" == "[B" ]]; then key="s"; fi
+        while read -rsn1 -t 0.05; do :; done
+    fi
+    
+    if [[ "$key" == "" || "$key" == $'\n' || "$key" == $'\r' ]]; then
+        key="ENTER"
+    elif [[ "$key" == "d" || "$key" == "D" || "$key" == $'\x7f' ]]; then
+        if [[ $selected -lt ${#profiles[@]} ]]; then
+            profile="${profiles[$selected]}"
+            filename=$(basename "$profile" .json)
+            
+            tput cnorm
+            clear
+            echo -e "\n${WHITE}╭────────────────────────────────────────────────────────────────╮${NC}"
+            echo -e "${WHITE}│${NC}${BOLD}                    ANTIGRAVITY CLI MANAGER                     ${NC}${WHITE}│${NC}"
+            echo -e "${WHITE}╰────────────────────────────────────────────────────────────────╯${NC}\n"
+            echo -ne "  ${RED}Are you sure you want to delete '${filename}'? [y/N]: ${NC}"
+            read -rn 1 conf
+            if [[ "$conf" == "y" || "$conf" == "Y" ]]; then
+                rm -f "$profile"
+                echo -e "\n\n  ${GREEN}[+] Account deleted.${NC}"
+                sleep 1
+                selected=0
+            fi
+            tput civis
+            FORCE_REDRAW=1
+            continue
+        fi
+    elif [[ "$key" == "w" || "$key" == "W" ]]; then
+        ((selected--))
+        [[ $selected -lt 0 ]] && selected=$((num_opts - 1))
+        FORCE_REDRAW=1
+    elif [[ "$key" == "s" || "$key" == "S" ]]; then
+        ((selected++))
+        [[ $selected -ge $num_opts ]] && selected=0
+        FORCE_REDRAW=1
+    fi
+    
+    if [[ "$key" != "ENTER" ]]; then
+        continue
+    fi
+    
+    tput cnorm
+    clear
+    
+    if [[ $selected -eq $((num_opts - 1)) ]]; then
+        break
+
+    elif [[ $selected -eq ${#profiles[@]} ]]; then
+        has_backup=0
+        if [[ -f "$TOKEN_PATH" ]]; then
+            cp "$TOKEN_PATH" "${TOKEN_PATH}.bak"
+            rm -f "$TOKEN_PATH"
+            has_backup=1
+        fi
+        
+        echo -e "\n${BLUE}[!] Token cleared. Opening browser for login...${NC}"
+        
+        rm -f "$AGY_PID_FILE"
+        (
+            while [[ ! -f "$TOKEN_PATH" ]]; do
+                if [[ -f "$AGY_PID_FILE" ]]; then
+                    read -r AGY_PID < "$AGY_PID_FILE"
+                    if [[ -n "$AGY_PID" ]] && ! kill -0 "$AGY_PID" 2>/dev/null; then
+                        exit 0
+                    fi
+                fi
+                sleep 0.5
+            done
+            sleep 0.2
+            if [[ -f "$AGY_PID_FILE" ]]; then
+                read -r AGY_PID < "$AGY_PID_FILE"
+                kill -TERM "$AGY_PID" 2>/dev/null
+            fi
+        ) &
+        WATCHER_PID=$!
+        
+        AGY_PID_FILE="$AGY_PID_FILE" bash -c 'echo $$ > "$AGY_PID_FILE"; exec agy'
+        
+        kill -TERM "$WATCHER_PID" 2>/dev/null
+        rm -f "$AGY_PID_FILE"
+        stty sane 2>/dev/null
+        
+        if [[ -f "$TOKEN_PATH" ]]; then
+            email=$("$HELPER_PATH" get_email "$TOKEN_PATH" 2>/dev/null)
+            email=$(echo "$email" | sed 's/[^a-zA-Z0-9@._+-]/_/g')
+            
+            if [[ -z "$email" ]]; then
+                email="account_$(date +%s)"
+                echo -e "${YELLOW}[!] Could not fetch email. Using fallback: $email${NC}"
+            fi
+            
+            profile_path="$PROFILES_DIR/${email}.json"
+            cp "$TOKEN_PATH" "$profile_path"
+            echo -e "\n${GREEN}[+] Account '${email}' successfully saved!${NC}"
+            
+            refresh_account_quota "$profile_path" >/dev/null 2>&1 &
+            
+            [[ $has_backup -eq 1 ]] && rm -f "${TOKEN_PATH}.bak"
+        else
+            echo -e "\n${RED}[-] Login failed or token not found.${NC}"
+            [[ $has_backup -eq 1 ]] && mv "${TOKEN_PATH}.bak" "$TOKEN_PATH"
+        fi
+        
+        sleep 1.5
+        tput civis
+        FIRST_RENDER=1
+        FORCE_REDRAW=1
+    else
+        profile="${profiles[$selected]}"
+        filename=$(basename "$profile" .json)
+        
+        cp "$profile" "$TOKEN_PATH"
+        echo -e "\n${GREEN}[+] Switched to '${filename}'. Launching 'agy'...${NC}\n"
+        
+        sleep 0.5
+        
+        agy
+        
+        stty sane 2>/dev/null
+        tput civis
+        FIRST_RENDER=1
+        FORCE_REDRAW=1
+    fi
+done

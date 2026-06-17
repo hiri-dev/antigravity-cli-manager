@@ -1,0 +1,10 @@
+profiles/
+*.json
+*.token
+*.bak
+.env
+.env.*
+*.log
+.DS_Store
+__pycache__/
+*.pyc

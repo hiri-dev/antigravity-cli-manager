@@ -15,56 +15,25 @@ CONFIG_DIR="$HOME/.config/acm"
 CONFIG_PATH="$CONFIG_DIR/config.json"
 PROFILES_DIR="$CONFIG_DIR/profiles"
 AGY_PID_FILE="$CONFIG_DIR/agy.pid"
+HELPER_PATH="$(dirname "$0")/acm_helper.py"
 
-LEGACY_PROFILES_DIR="$HOME/antigravity-cli-manager/profiles"
-if [[ -d "$LEGACY_PROFILES_DIR" ]]; then
-    mkdir -p "$PROFILES_DIR"
-    cp -rn "$LEGACY_PROFILES_DIR"/*.json "$PROFILES_DIR"/ 2>/dev/null
+MIGRATION_MARKER="$CONFIG_DIR/.migrated"
+if [[ ! -f "$MIGRATION_MARKER" ]]; then
+    LEGACY_PROFILES_DIR="$HOME/antigravity-cli-manager/profiles"
+    if [[ -d "$LEGACY_PROFILES_DIR" ]]; then
+        mkdir -p "$PROFILES_DIR"
+        cp -rn "$LEGACY_PROFILES_DIR"/*.json "$PROFILES_DIR"/ 2>/dev/null
+    fi
+    touch "$MIGRATION_MARKER" 2>/dev/null
 fi
 
 mkdir -p "$PROFILES_DIR"
 mkdir -p "$(dirname "$TOKEN_PATH")"
 mkdir -p "$CONFIG_DIR"
 
+
 if [[ "${1:-}" == "rotate" ]]; then
-    NEW_PROFILE=$(TOKEN_PATH="$TOKEN_PATH" PROFILES_DIR="$PROFILES_DIR" python3 - <<'EOF' 2>/dev/null
-import os, json, glob, shutil
-token_path = os.environ.get('TOKEN_PATH')
-profiles_dir = os.environ.get('PROFILES_DIR')
-try:
-    with open(token_path) as f:
-        active_data = json.load(f)
-    active_refresh = active_data.get('token', {}).get('refresh_token')
-except Exception:
-    active_refresh = None
-best_profile = None
-best_quota = -1
-active_profile_path = None
-for p in glob.glob(os.path.join(profiles_dir, '*.json')):
-    try:
-        with open(p) as f:
-            d = json.load(f)
-        if active_refresh and d.get('token', {}).get('refresh_token') == active_refresh:
-            active_profile_path = p
-        q = d.get('quota_percent', -1)
-        if q > best_quota:
-            best_quota = q
-            best_profile = p
-    except Exception:
-        pass
-active_quota = -1
-if active_profile_path:
-    try:
-        with open(active_profile_path) as f:
-            active_quota = json.load(f).get('quota_percent', -1)
-    except Exception:
-        pass
-if active_quota <= 0 or not active_profile_path:
-    if best_profile and best_profile != active_profile_path and best_quota > 0:
-        shutil.copy(best_profile, token_path)
-        print(os.path.basename(best_profile).replace('.json', ''))
-EOF
-)
+    NEW_PROFILE=$("$HELPER_PATH" rotate "$TOKEN_PATH" "$PROFILES_DIR" 2>/dev/null)
     if [[ -n "$NEW_PROFILE" ]]; then
         echo "Auto-rotated to: $NEW_PROFILE"
     fi
@@ -76,42 +45,7 @@ if [[ "${1:-}" == "run" ]]; then
         echo "Usage: acm run <command...>"
         exit 1
     fi
-    TOKEN_PATH="$TOKEN_PATH" PROFILES_DIR="$PROFILES_DIR" python3 - <<'EOF' >/dev/null 2>&1
-import os, json, glob, shutil
-token_path = os.environ.get('TOKEN_PATH')
-profiles_dir = os.environ.get('PROFILES_DIR')
-try:
-    with open(token_path) as f:
-        active_data = json.load(f)
-    active_refresh = active_data.get('token', {}).get('refresh_token')
-except Exception:
-    active_refresh = None
-best_profile = None
-best_quota = -1
-active_profile_path = None
-for p in glob.glob(os.path.join(profiles_dir, '*.json')):
-    try:
-        with open(p) as f:
-            d = json.load(f)
-        if active_refresh and d.get('token', {}).get('refresh_token') == active_refresh:
-            active_profile_path = p
-        q = d.get('quota_percent', -1)
-        if q > best_quota:
-            best_quota = q
-            best_profile = p
-    except Exception:
-        pass
-active_quota = -1
-if active_profile_path:
-    try:
-        with open(active_profile_path) as f:
-            active_quota = json.load(f).get('quota_percent', -1)
-    except Exception:
-        pass
-if active_quota <= 0 or not active_profile_path:
-    if best_profile and best_profile != active_profile_path and best_quota > 0:
-        shutil.copy(best_profile, token_path)
-EOF
+    "$HELPER_PATH" rotate "$TOKEN_PATH" "$PROFILES_DIR" >/dev/null 2>&1
     shift
     exec "$@"
 fi
@@ -125,9 +59,8 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
 JSON
 fi
 
-SHOW_ART=$(CONFIG_PATH="$CONFIG_PATH" python3 -c "import os, json; print(json.load(open(os.environ['CONFIG_PATH'])).get('show_ascii_art', True))" 2>/dev/null)
-TIMEOUT=$(CONFIG_PATH="$CONFIG_PATH" python3 -c "import os, json; print(json.load(open(os.environ['CONFIG_PATH'])).get('timeout_seconds', 3))" 2>/dev/null)
-if [[ -z "$TIMEOUT" ]]; then TIMEOUT=3; fi
+SHOW_ART=$("$HELPER_PATH" get_config "$CONFIG_PATH" show_ascii_art True)
+TIMEOUT=$("$HELPER_PATH" get_config "$CONFIG_PATH" timeout_seconds 3)
 
 trap "tput cnorm; exit" INT TERM EXIT
 
@@ -162,116 +95,7 @@ colorize_anthropic() {
 }
 
 refresh_account_quota() {
-    local profile_path="$1"
-    PROFILE_PATH="$profile_path" TIMEOUT="$TIMEOUT" python3 - <<'EOF'
-import os, json, urllib.request, urllib.parse, sys, base64
-
-profile_path = os.environ.get('PROFILE_PATH')
-timeout = int(os.environ.get('TIMEOUT', '3'))
-
-try:
-    with open(profile_path) as f:
-        data = json.load(f)
-except Exception:
-    sys.exit(1)
-
-access_token = data.get('token', {}).get('access_token')
-refresh_token = data.get('token', {}).get('refresh_token')
-
-if not access_token:
-    sys.exit(1)
-
-def query_quota(token):
-    req = urllib.request.Request(
-        'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
-        headers={
-            'Authorization': f'Bearer {token}',
-            'Content-Type': 'application/json',
-            'User-Agent': 'vscode/1.X.X (Antigravity/4.2.4)'
-        },
-        data=json.dumps({}).encode('utf-8'),
-        method='POST'
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-        return json.loads(res.read().decode('utf-8'))
-
-quota_data = None
-try:
-    quota_data = query_quota(access_token)
-except Exception:
-    if refresh_token:
-        try:
-            sec_b64 = 'R0NTUFgtSzU4RldSNDg2TGRMSjFtTEI4c1hDNHo2cURBZg=='
-            req_refresh = urllib.request.Request(
-                'https://oauth2.googleapis.com/token',
-                data=urllib.parse.urlencode({
-                    'client_id': '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com',
-                    'client_secret': base64.b64decode(sec_b64).decode('utf-8'),
-                    'refresh_token': refresh_token,
-                    'grant_type': 'refresh_token'
-                }).encode('utf-8'),
-                method='POST'
-            )
-            with urllib.request.urlopen(req_refresh, timeout=timeout) as res_ref:
-                ref_res_data = json.loads(res_ref.read().decode('utf-8'))
-                new_token = ref_res_data.get('access_token')
-                if new_token:
-                    access_token = new_token
-                    data['token']['access_token'] = new_token
-                    try:
-                        quota_data = query_quota(access_token)
-                        with open(profile_path, 'w') as f:
-                            json.dump(data, f)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-if not quota_data:
-    sys.exit(1)
-
-try:
-    g_pct = None
-    c_pct = None
-    
-    for group in quota_data.get('groups', []):
-        display_name = group.get('displayName', '').lower()
-        
-        weekly_frac = None
-        fiveh_frac = None
-        for b in group.get('buckets', []):
-            w = b.get('window', '').lower()
-            if w == 'weekly':
-                weekly_frac = b.get('remainingFraction')
-            elif w == '5h':
-                fiveh_frac = b.get('remainingFraction')
-                
-        if weekly_frac is None:
-            weekly_frac = 1.0
-        if fiveh_frac is None:
-            fiveh_frac = 1.0
-            
-        pct = 0
-        if weekly_frac > 0.001:
-            pct = int(fiveh_frac * 100)
-            
-        if 'gemini' in display_name:
-            g_pct = pct
-        elif 'claude' in display_name or 'gpt' in display_name or '3p' in display_name:
-            c_pct = pct
-
-    if g_pct is not None or c_pct is not None:
-        data['g_pct'] = g_pct if g_pct is not None else 0
-        data['c_pct'] = c_pct if c_pct is not None else 0
-        data['quota_percent'] = data['g_pct'] + data['c_pct']
-        with open(profile_path, 'w') as f:
-            json.dump(data, f)
-        sys.exit(0)
-except Exception:
-    pass
-
-sys.exit(1)
-EOF
+    "$HELPER_PATH" refresh "$1" "$TIMEOUT"
 }
 
 run_refresh_quotas_startup() {
@@ -286,26 +110,27 @@ FIRST_RENDER=1
 FORCE_REDRAW=1
 LAST_STATE=""
 
+render_menu_item() {
+    local idx="$1"
+    local label="$2"
+    local color="$3"
+    local rtext ctext len
+    if [[ $idx -eq $selected ]]; then
+        rtext="  ❯  $label "
+        ctext="  ${CYAN}❯${NC} ${INV} $label ${NC}"
+    else
+        rtext="     $label "
+        ctext="     ${color}$label${NC} "
+    fi
+    len=${#rtext}
+    echo -e "${WHITE}│${NC}${ctext}${pad:0:$((64 - len))}${WHITE}│${NC}"
+}
+
 while true; do
     profiles_data=()
     while IFS= read -r line; do
         [[ -n "$line" ]] && profiles_data+=("$line")
-    done < <(PROFILES_DIR="$PROFILES_DIR" python3 - <<'EOF' 2>/dev/null
-import os, json, glob
-profiles_dir = os.environ.get('PROFILES_DIR', '')
-if os.path.isdir(profiles_dir):
-    for p in sorted(glob.glob(os.path.join(profiles_dir, '*.json'))):
-        try:
-            with open(p) as f:
-                d = json.load(f)
-                g = d.get('g_pct', '')
-                c = d.get('c_pct', '')
-                q = d.get('quota_percent', '')
-                print(f"{p},{g},{c},{q}")
-        except Exception:
-            pass
-EOF
-)
+    done < <("$HELPER_PATH" get_all_quotas "$PROFILES_DIR" 2>/dev/null)
 
     profiles=()
     g_pcts=()
@@ -424,26 +249,10 @@ EOF
         echo -e "${WHITE}│${NC}${pad:0:64}${WHITE}│${NC}"
         
         idx=${#profiles[@]}
-        if [[ $idx -eq $selected ]]; then
-            rtext="  ❯  [+] Add new account "
-            ctext="  ${CYAN}❯${NC} ${INV} [+] Add new account ${NC}"
-        else
-            rtext="     [+] Add new account "
-            ctext="     ${GREEN}[+]${NC} Add new account "
-        fi
-        len=${#rtext}
-        echo -e "${WHITE}│${NC}${ctext}${pad:0:$((64 - len))}${WHITE}│${NC}"
+        render_menu_item "$idx" "[+] Add new account" "${GREEN}"
         
         idx=$((idx + 1))
-        if [[ $idx -eq $selected ]]; then
-            rtext="  ❯  [x] Exit "
-            ctext="  ${CYAN}❯${NC} ${INV} [x] Exit ${NC}"
-        else
-            rtext="     [x] Exit "
-            ctext="     ${RED}[x]${NC} Exit "
-        fi
-        len=${#rtext}
-        echo -e "${WHITE}│${NC}${ctext}${pad:0:$((64 - len))}${WHITE}│${NC}"
+        render_menu_item "$idx" "[x] Exit" "${RED}"
         
         echo -e "${WHITE}│${NC}${pad:0:64}${WHITE}│${NC}"
         echo -e "${WHITE}╰────────────────────────────────────────────────────────────────╯${NC}\033[J"
@@ -545,14 +354,7 @@ EOF
         stty sane 2>/dev/null
         
         if [[ -f "$TOKEN_PATH" ]]; then
-            access_token=$(TOKEN_PATH="$TOKEN_PATH" python3 -c "import os, json; print(json.load(open(os.environ['TOKEN_PATH'])).get('token', {}).get('access_token', ''))" 2>/dev/null)
-            if [[ -n "$access_token" ]]; then
-                echo -e "${BLUE}[*] Fetching account email from Google...${NC}"
-                email=$(curl -sf -H "Authorization: Bearer $access_token" https://www.googleapis.com/oauth2/v3/userinfo | python3 -c "import sys, json, re; print(re.sub(r'[^a-zA-Z0-9@._+-]', '_', json.load(sys.stdin).get('email', '')))" 2>/dev/null)
-            else
-                email=""
-            fi
-            
+            email=$("$HELPER_PATH" get_email "$TOKEN_PATH" 2>/dev/null)
             email=$(echo "$email" | sed 's/[^a-zA-Z0-9@._+-]/_/g')
             
             if [[ -z "$email" ]]; then
@@ -575,11 +377,11 @@ EOF
         sleep 1.5
         tput civis
         FIRST_RENDER=1
-        FORCE_REDRAW=1
     else
         profile="${profiles[$selected]}"
         filename=$(basename "$profile" .json)
         
+        "$HELPER_PATH" refresh "$profile" "$TIMEOUT" >/dev/null 2>&1
         cp "$profile" "$TOKEN_PATH"
         echo -e "\n${GREEN}[+] Switched to '${filename}'. Launching 'agy'...${NC}\n"
         

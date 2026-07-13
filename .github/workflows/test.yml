@@ -18,6 +18,12 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Create dummy credentials
+      run: |
+        echo "USER_AGENT = 'mock-agent'" > credentials.py
+        echo "CLIENT_ID = 'mock-client'" >> credentials.py
+        echo "def get_client_secret(): return 'mock-secret'" >> credentials.py
+
     - name: Run Python unit tests
       run: python3 -m unittest discover -s tests -p "test_*.py"
 

@@ -19,7 +19,7 @@ jobs:
         python-version: '3.11'
 
     - name: Run Python unit tests
-      run: python3 -m unittest tests/test_acm.py
+      run: python3 -m unittest tests.test_acm
 
     - name: Syntax check Bash scripts
       run: |

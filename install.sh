@@ -55,11 +55,11 @@ if [[ -t 0 ]]; then
         
         AGY_PID_FILE="$AGY_PID_FILE" bash -c 'echo $$ > "$AGY_PID_FILE"; exec agy' || true
         
-        kill -TERM "$WATCHER_PID" 2>/dev/null
+        kill -TERM "$WATCHER_PID" 2>/dev/null || true
         rm -f "$AGY_PID_FILE"
         
         if [[ -f "$TOKEN_PATH" ]]; then
-            email=$(python3 "$BIN_DIR/acm_helper.py" get_email "$TOKEN_PATH" 2>/dev/null)
+            email=$(python3 "$BIN_DIR/acm_helper.py" get_email "$TOKEN_PATH" 2>/dev/null || echo "")
             email=$(echo "$email" | sed 's/[^a-zA-Z0-9@._+-]/_/g')
             if [[ -z "$email" ]]; then
                 email="account_$(date +%s)"

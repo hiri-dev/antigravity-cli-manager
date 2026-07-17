@@ -53,7 +53,7 @@ if [[ -t 0 ]]; then
         ) &
         WATCHER_PID=$!
         
-        AGY_PID_FILE="$AGY_PID_FILE" bash -c 'echo $$ > "$AGY_PID_FILE"; exec agy'
+        AGY_PID_FILE="$AGY_PID_FILE" bash -c 'echo $$ > "$AGY_PID_FILE"; exec agy' || true
         
         kill -TERM "$WATCHER_PID" 2>/dev/null
         rm -f "$AGY_PID_FILE"

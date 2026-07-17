@@ -31,6 +31,19 @@ PROFILES_DIR="$HOME/.config/acm/profiles"
 TOKEN_PATH="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
 AGY_PID_FILE="$HOME/.config/acm/agy.pid"
 
+if [[ -f "$TOKEN_PATH" ]]; then
+    email=$(python3 "$BIN_DIR/acm_helper.py" get_email "$TOKEN_PATH" 2>/dev/null || echo "")
+    email=$(echo "$email" | sed 's/[^a-zA-Z0-9@._+-]/_/g')
+    if [[ -n "$email" ]]; then
+        mkdir -p "$PROFILES_DIR"
+        if [[ ! -f "$PROFILES_DIR/${email}.json" ]]; then
+            cp "$TOKEN_PATH" "$PROFILES_DIR/${email}.json"
+            echo "[+] Automatically imported active account: ${email}"
+            python3 "$BIN_DIR/acm_helper.py" refresh "$PROFILES_DIR/${email}.json" 3 >/dev/null 2>&1 &
+        fi
+    fi
+fi
+
 if [[ -t 0 ]]; then
     if [[ ! -d "$PROFILES_DIR" || -z "$(find "$PROFILES_DIR" -name "*.json" 2>/dev/null)" ]]; then
         echo "No accounts saved yet. Starting OAuth login flow..."
